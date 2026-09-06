@@ -1,0 +1,87 @@
+# systemd-юнит агента NodeDog.
+#
+# Песочница здесь — не формальность, а главное обещание проекта: агент
+# физически не должен быть способен помешать работе ноды и клиентам.
+# Отсюда пустой набор capabilities, доступ к журналу только на чтение
+# и жёсткие лимиты памяти и процессора.
+
+[Unit]
+Description=NodeDog — сбор данных о соединениях на ноде Remnawave
+Documentation=https://github.com/Zagorsky17/NodeDog
+# После сети, но не зависит от контейнера ноды: агент штатно стартует
+# раньше Xray и сам дожидается появления журнала.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nodedog
+Group=nodedog
+
+EnvironmentFile=/etc/nodedog/agent.env
+ExecStart=/usr/local/bin/nodedog-agent
+
+# Перезапуск всегда: агент, упавший ночью, не должен ждать оператора.
+Restart=always
+RestartSec=10
+# Пять неудачных стартов за минуту — значит проблема не во временном
+# сбое, а в настройках. Дальше systemd прекращает попытки, и это видно
+# в статусе, а не тонет в бесконечном цикле перезапусков.
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# --- Ресурсы ---------------------------------------------------------------
+# Агент в норме занимает 20-40 МБ. Потолок в 128 МБ оставляет запас на
+# всплеск при сканировании сетей и при этом гарантирует, что агент не
+# сможет вытеснить Xray из памяти.
+MemoryMax=128M
+MemoryHigh=96M
+# Пятая часть одного ядра: разбор строк журнала стоит микросекунды,
+# и больше агенту не нужно даже на нагруженной ноде.
+CPUQuota=20%
+# Приоритет ниже обычного: если процессор занят, трафик клиентов
+# важнее нашей статистики.
+Nice=10
+IOSchedulingClass=idle
+
+# --- Песочница -------------------------------------------------------------
+# Ни одной capability: агент не управляет сетью, не меняет файрвол
+# и не разрывает соединения. Это отличает его от плагинов самой
+# Remnawave, которым нужен NET_ADMIN.
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+
+# Файловая система только для чтения, кроме своего рабочего каталога.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/nodedog
+# Журнал Xray — только чтение. Ротацией занимается logrotate; агент
+# в неё не вмешивается, иначе сломал бы работу другим читателям
+# того же файла (встроенному Torrent Blocker, например).
+ReadOnlyPaths=/var/log/remnanode
+
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+# Только IP-сокеты: агенту нужен ровно один исходящий HTTPS к панели.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# --- Журналирование --------------------------------------------------------
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nodedog-agent
+
+[Install]
+WantedBy=multi-user.target
