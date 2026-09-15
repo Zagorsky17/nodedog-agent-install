@@ -77,7 +77,38 @@ install -d -m 0750 -o root -g root "$INSTALL_DIR"
 install -m 0644 -o root -g root "$SCRIPT_DIR/docker-compose.yml" "$COMPOSE_FILE"
 
 if [ -f "$ENV_FILE" ]; then
-    info "Настройки уже есть, не трогаем: $ENV_FILE"
+    info "Настройки уже есть, сохраняем: $ENV_FILE"
+
+    # Одно исключение — версия образа. Повторный запуск установщика и
+    # есть обновление (так работает rollout.sh), а версию, которую он
+    # ставит, зеркало вписывает в шаблон при публикации релиза. Оставь
+    # мы её в .env прежней — `pull` скачал бы тот же образ, `up -d`
+    # ответил бы Running, контейнер остался бы старым, а rollout.sh
+    # отчитался бы «✓» по каждой ноде: обновление, которого не было,
+    # выглядело бы успешным.
+    #
+    # Правится ровно одна строка, остальное — UUID, токен, GID, пути —
+    # остаётся как было. Откат выходит тем же путём: установщик старой
+    # версии (NODEDOG_VERSION=v1.0.1 ./rollout.sh) ставит свою версию.
+    #
+    # Шаблон в исходном репозитории версию не отслеживает — её проставляет
+    # только mirror-installer.sh, поэтому контейнерного агента ставят из
+    # архива зеркала, а не из клона репозитория.
+    NEW_TAG="$(sed -n 's/^AGENT_IMAGE_TAG=//p' "$SCRIPT_DIR/.env.example")"
+    OLD_TAG="$(sed -n 's/^AGENT_IMAGE_TAG=//p' "$ENV_FILE")"
+    if [ -z "$NEW_TAG" ]; then
+        warn "В шаблоне нет AGENT_IMAGE_TAG — версию образа не меняем."
+    elif [ "$NEW_TAG" = "$OLD_TAG" ]; then
+        info "Версия образа уже $NEW_TAG"
+    elif grep -q '^AGENT_IMAGE_TAG=' "$ENV_FILE"; then
+        sed -i "s|^AGENT_IMAGE_TAG=.*|AGENT_IMAGE_TAG=$NEW_TAG|" "$ENV_FILE"
+        info "Версия образа: ${OLD_TAG:-не задана} → $NEW_TAG"
+    else
+        # Строки нет — compose всё равно не запустится без неё
+        # (${AGENT_IMAGE_TAG:?}), так что дописать её безопасно.
+        printf '\nAGENT_IMAGE_TAG=%s\n' "$NEW_TAG" >> "$ENV_FILE"
+        info "Версия образа: не задана → $NEW_TAG"
+    fi
 else
     info "Создание $ENV_FILE из шаблона"
     # Права 0600: в файле лежит токен агента, читать его посторонним

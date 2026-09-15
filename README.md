@@ -73,8 +73,25 @@ cd nodedog-agent-install && sudo ./install.sh
 
 ## Обновление
 
-**Контейнер:** поменять `AGENT_IMAGE_TAG` в `/opt/nodedog-agent/.env`
-и выполнить `docker compose pull && docker compose up -d`.
+**Контейнер** — номер версии берётся из тега релиза без `v`
+(`v1.0.2` → `1.0.2`):
+
+```bash
+cd /opt/nodedog-agent
+sed -i 's/^AGENT_IMAGE_TAG=.*/AGENT_IMAGE_TAG=1.0.2/' .env
+docker compose pull && docker compose up -d
+docker compose ps                      # IMAGE …:1.0.2, CREATED — секунды назад
+```
+
+Правка `.env` обязательна: тег образа закреплён, и без неё `pull`
+скачает ту же версию, а `up -d` ответит `Running`, не пересоздав
+контейнер. Удачное обновление видно по `Recreated`. UUID, токен и
+позиция чтения журнала сохраняются — подключать ноду заново не нужно.
+
+Другой путь — скачать архив нового релиза и запустить
+`docker/install.sh` ещё раз, как при установке. Существующий `.env`
+установщик сохраняет, меняя в нём одну строку — `AGENT_IMAGE_TAG` на
+свою версию, — и сам пересоздаёт контейнер.
 
 **systemd:** скачать новый архив и запустить `./install.sh` ещё раз —
 настройки в `/etc/nodedog/agent.env` он не трогает.
